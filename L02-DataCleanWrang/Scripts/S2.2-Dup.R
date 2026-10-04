@@ -36,7 +36,7 @@ duplicados_exactos
 cat("-> Se han detectado", nrow(duplicados_exactos), "filas involucradas en duplicidad exacta.\n")
 
 # Limpieza de duplicados exactos
-df_sin_clones <- df %>%                                    # Cambiar nombres de esta sección si es necesario
+df_sin_clones <- df %>%                                 # Cambiar nombres de esta sección si es necesario
   mutate(Email = tolower(Email),                        # Normalizar los textos (ej. pasar a minúsculas)
          Nombre_Cliente = tolower(Nombre_Cliente)) %>%  # Para evitar diferenciadores falsos
   distinct()                                            # La función distinct() borra filas donde todos los valores sean idénticos
@@ -45,12 +45,14 @@ df_sin_clones
 
 cat("Total de filas restantes después de eliminar duplicados exactos:", nrow(df_sin_clones), "\n\n")
 
+skim(df_sin_clones)
+
 # ==========================================
 # DUPLICADOS PARCIALES
 
 # Identificar duplicados parciales (Errores de captura o fusión)
 # Ejemplo: Cuando coincide Cliente, Fecha y Monto, pero varía el ID de Transacción
-duplicados_parciales <- df_sin_clones %>%                    # Cambiar nombres de esta sección si es necesario
+duplicados_parciales <- df_sin_clones %>%                 # Cambiar nombres de esta sección si es necesario
   group_by(ID_Cliente, Fecha_Transaccion, Monto_MXN) %>%  # Agrupamos únicamente por las columnas que definen la lógica
   filter(n() > 1) %>%                                     # Filtrar únicamente los que se repitan
   ungroup() %>%                                           # Desagrupar
@@ -61,7 +63,7 @@ duplicados_parciales
 cat("-> Se han detectado", nrow(duplicados_parciales), "filas que son duplicados parciales.\n\n")   
 
 # Limpieza de duplicados Parciales
-df_sin_dup <- df_sin_clones %>%                             # Cambiar nombres de esta sección si es necesario
+df_sin_dup <- df_sin_clones %>%                         # Cambiar nombres de esta sección si es necesario
   distinct(ID_Cliente, Fecha_Transaccion, Monto_MXN,    # Borra filas donde los valores de las columnas seleccionadas sean idénticos 
            .keep_all = TRUE)                            # Retener la primera ocurrencia de cada caso
 
@@ -149,7 +151,7 @@ df_limpio <- df_validado %>%
 df_limpio
 
 # Guardado final en CSV si se va a requerir llevarlo a otro sistema
-# write_csv(df_final, "ventasB126_limpio.csv")
+# write_csv(df_limpio, "ventasB126_limpio.csv")
 
 # ==========================================
 # PROMPT EJEMPLO PARA ESTE CUADERNO DE TRABAJO

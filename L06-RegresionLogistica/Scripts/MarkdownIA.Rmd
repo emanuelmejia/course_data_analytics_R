@@ -1,0 +1,419 @@
+---
+title: "Siniestros en seguros de daños"
+subtitle: "Pronóstico del monto"
+author: "Emanuel Mejía"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r inicial, include=FALSE}
+library(tidyverse)
+library(skimr)
+library(corrplot)
+library(broom)
+library(caret)
+library(fastDummies)
+
+# Fijar la semilla
+set.seed(123)
+
+setwd("C:/Users/EmanuelMejia/OneDrive - Firedrop/Github/Public/course_data_analytics_R/L06-RegresionLogistica/data")
+# Cargar el dataset de fraudes
+seguros <- read.csv("segDanos.csv")
+```
+
+# Glosario de Variables - Dataset de Seguros
+
+A continuación se detalla la descripción de cada una de las variables presentes en el conjunto de datos para facilitar el entendimiento de los modelos y gráficas posteriores:
+
+* **monto**: (Numérica) Costo total en dinero exigido a la aseguradora por el siniestro. Es la variable objetivo para el pronóstico lineal.
+* **madrugada**: (Binaria) Indica el momento del accidente. Toma valor 1 si ocurrió en la madrugada y 0 en otro horario.
+* **demora**: (Numérica Entera) Cantidad de días transcurridos entre la ocurrencia del siniestro y la notificación formal a la aseguradora.
+* **gravedad**: (Categórica Ordinal) Clasificación cualitativa del impacto físico o daño material del vehículo. Niveles: Leve, Moderado, Pérdida Total.
+* **cobertura**: (Categórica Ordinal) Nivel de protección contratado en la póliza del cliente. Niveles: Responsabilidad Civil, Limitada, Amplia.
+* **temperatura**: (Numérica Continua - Ruido) Registro ambiental en grados Celsius el día del siniestro. No posee impacto estadístico real sobre el fraude.
+* **colorAuto**: (Categórica Nominal - Ruido) Tonalidad estética del vehículo asegurado (Rojo, Azul, Blanco, Negro). No influye en el costo ni en el riesgo.
+* **antiguedad**: (Numérica Entera) Tiempo total en meses que el cliente lleva asegurado en la compañía. Actúa habitualmente como factor protector.
+* **siniPrevios**: (Numérica Entera) Historial o conteo de reclamaciones por choques o siniestros registrados por el mismo cliente en el pasado.
+* **cambioCobert**: (Dicotómica / Binaria) Indica si el cliente modificó o elevó el límite de sus pólizas recientemente (1: Sí, 0: No) antes del reporte.
+* **atrasos**: (Dicotómica / Binaria) Registro de comportamiento financiero. Indica si el asegurado cuenta con historial de primas vencidas (1: Sí, 0: No).
+* **fraude**: (Dicotómica / Binaria) Variable objetivo para el modelo logístico. Indica si la reclamación fue dictaminada como legítima (0) o fraudulenta (1).
+
+# Perfilamiento Inicial y Correlación Inicial
+
+En esta sección se exploran los primeros registros del conjunto de datos para entender su estructura básica. Posteriormente, se omiten los valores nulos para evitar errores analíticos y se realiza un perfilamiento general de las variables mediante `skim()`. Finalmente, se genera una primera matriz de correlación considerando exclusivamente las variables originalmente numéricas para evaluar posibles relaciones lineales tempranas.
+
+```{r perfilamiento}
+print("--- Primeros 5 registros ---")
+head(seguros, 5)
+
+# Omitir valores nulos por seguridad y perfilar variables
+seguros <- seguros %>% na.omit()
+skim(seguros)
+
+# Seleccionar únicamente variables numéricas para la matriz de correlación
+segurosNum <- seguros %>% select(where(is.numeric))
+
+# Gráfico de correlación para comprobar el comportamiento inyectado del monto
+cor(segurosNum) %>% corrplot(method = "square", tl.col = "black", tl.srt = 45)
+```
+
+# Correlación con Variables Categóricas
+
+Dado que algunas variables importantes son de naturaleza categórica (ordinales o nominales), es fundamental transformarlas a un formato numérico temporal para poder integrarlas en la evaluación de correlación multivariable y detectar su fuerza de relación con la variable objetivo. Aquí se re-codifican variables como `gravedad`, `cobertura` y `colorAuto`.
+
+```{r transformacion_categoricas}
+# Crear una copia del dataset para no alterar los tipos de datos originales
+seguros_corr <- seguros
+
+# Conversión de variables Ordinales (Asignación manual de orden lógico)
+seguros_corr$gravedadNum <- factor(seguros_corr$gravedad, 
+                                       levels = c("Leve", "Moderado", "Pérdida Total")) %>% 
+  as.numeric()
+
+seguros_corr$coberturaNum <- factor(seguros_corr$cobertura, 
+                                          levels = c("Responsabilidad Civil", "Limitada", "Amplia")) %>% 
+  as.numeric()
+
+# Conversión de variables Nominales (Asignación automática por orden alfabético)
+seguros_corr$colorAutoNum <- factor(seguros_corr$colorAuto) %>% 
+  as.numeric()
+```
+
+# Selección y Nueva Matriz de Correlación
+
+Con las variables categóricas debidamente transformadas, se procede a consolidar un nuevo dataset de variables numéricas puras. A partir de este dataset ampliado, se calcula una nueva matriz de correlación completa. A continuación se imprimen los coeficientes exactos que interactúan fuertemente con la variable `monto` y se despliega un mapa de correlación detallado para dimensionar la co-linealidad de los datos antes de pasar a la fase de modelado.
+
+```{r correlacion_completa}
+# Seleccionar solo las variables numéricas base y las nuevas transformadas
+segurosNum <- seguros_corr %>% 
+  select(
+    monto, 
+    madrugada, 
+    demora, 
+    temperatura, 
+    gravedadNum, 
+    coberturaNum, 
+    colorAutoNum,
+    antiguedad,
+    sinPrevios,
+    cambioCobert,
+    atrasos,
+    fraude
+  )
+
+# Generar y pintar la matriz de correlación completa
+matriz_completa <- cor(segurosNum)
+
+# Imprimir los valores de correlación específicos con el Monto de Reclamo
+print("--- Correlaciones numéricas exactas con monto ---")
+print(sort(matriz_completa["monto", ], decreasing = TRUE))
+
+# Dibujar el gráfico corrplot con todas las variables incluidas
+cor(segurosNum) %>% corrplot(
+         method = "square", 
+         type = "upper",        # Muestra solo la mitad superior para que sea más limpio
+         tl.col = "black", 
+         tl.srt = 45, 
+         addCoef.col = "black", # Agrega los números exactos de correlación dentro del gráfico
+         number.cex = 0.7)      # Tamaño del texto de los números
+```
+
+# Distribución de la Variable Objetivo
+
+En esta sección se visualiza cómo se distribuyen los montos reclamados en los siniestros. La gráfica aplica un formato personalizado para resaltar los datos, simplificando la cuadrícula y armonizando los colores de los ejes.
+
+```{r distribucion_monto}
+# Generar el gráfico de distribución del monto
+ggplot(seguros, aes(x = monto)) +
+  # Se utiliza geom_histogram al ser una variable continua (crea las barras de distribución)
+  geom_histogram(fill = "cornflowerblue", color = "white", bins = 30) +
+  labs(
+    title = "Monto de siniestro",
+    subtitle = "Distribución de datos",
+    x = "Monto (Moneda)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  theme(
+    # Título: letra grande, negrita y color cornflowerblue
+    plot.title = element_text(color = "cornflowerblue", face = "bold", size = 18),
+    
+    # Subtítulo: letra mediana, cursiva y color gris
+    plot.subtitle = element_text(color = "gray50", face = "italic", size = 14),
+    
+    # Títulos de los ejes en gris
+    axis.title = element_text(color = "gray50"),
+    
+    # Etiquetas de los ticks en gris
+    axis.text = element_text(color = "gray50"),
+    
+    # Líneas de los ticks y spines (líneas de los ejes) en gris
+    axis.ticks = element_line(color = "gray50"),
+    axis.line = element_line(color = "gray50"),
+    
+    # Grid: Dejar solo las líneas horizontales en gris y remover las verticales
+    panel.grid.major.y = element_line(color = "gray50", linewidth = 0.3),
+    panel.grid.minor.y = element_line(color = "gray50", linewidth = 0.1, linetype = "dashed"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+# División de Datos de Entrenamiento y Prueba
+
+En esta etapa se realiza la partición del conjunto de datos principal en dos subconjuntos independientes: uno destinado al **entrenamiento** del modelo y otro para la **prueba** o validación de su rendimiento predictivo.
+
+Dentro del script se muestra (en formato de comentario) cómo se realizaría una partición estratificada para mantener intacta la proporción original de clases de la variable objetivo. Sin embargo, el proceso que se ejecuta finalmente realiza una selección de índices de forma completamente aleatoria, separando el 90% de las observaciones para entrenar (`segurosTrain`) y dejando el 10% restante para probar el modelo (`segurosTest`).
+
+```{r division_datos, echo = TRUE}
+# # Crear índices estratificados (p = 0.9 es la proporción de entrenamiento)
+# # Proporción de 0s y 1s sea igual a la distribución original
+# indices_entrenamiento <- createDataPartition(seguros$fraude, p = 0.9, list = FALSE)
+# 
+# # Dividir los datos
+# segurosTrain <- seguros[indices_entrenamiento, ]
+# segurosTest  <- seguros[-indices_entrenamiento, ]
+
+# Calcular el número de filas para el 0% de los datos
+tamano_entrenamiento <- floor(0.9 * nrow(seguros))
+
+# Crear índices de forma completamente aleatoria
+indices_entrenamiento <- sample(seq_len(nrow(seguros)), size = tamano_entrenamiento)
+
+# Dividir los datos
+segurosTrain <- seguros[indices_entrenamiento, ]
+segurosTest  <- seguros[-indices_entrenamiento, ]
+```
+
+# Modelos de Regresión Lineal
+
+A continuación, se ajustan distintos modelos de regresión lineal para pronosticar el monto de los siniestros, incrementando progresivamente la complejidad y luego refinando las variables para encontrar el mejor ajuste.
+
+### Modelo Lineal Simple (Base)
+En esta primera aproximación, se busca explicar el monto del siniestro de manera sencilla. *(Nota analítica: Aunque el comentario original de diseño hace referencia a utilizar los días de demora, el código se encuentra estructurado para explicar el monto utilizando únicamente la variable categórica de la `gravedad` del impacto).*
+
+La formulación teórica de este modelo es:
+
+$$monto = \beta_0 + \beta_1 X_{\text{gravedad}} + \epsilon$$
+
+### Modelo Múltiple (Control de fraude y ruido numérico)
+Para el segundo modelo, se amplía la perspectiva agregando variables de control clave. Se incorporan el momento del accidente (`madrugada`), los días de `demora`, la `cobertura`, la `gravedad` y la etiqueta de dictamen que indica si se trató de un `fraude`. 
+
+La formulación teórica de este modelo es:
+
+$$monto = \beta_0 + \beta_1 X_{\text{madrugada}} + \beta_2 X_{\text{demora}} + \beta_3 X_{\text{gravedad}} + \beta_4 X_{\text{cobertura}} + \beta_5 X_{\text{fraude}} + \epsilon$$
+
+### Modelo Saturado (Categóricas y variables de ruido)
+En este paso se entrena un modelo saturado que incluye simultáneamente todas las variables del conjunto de datos de entrenamiento. En este proceso analítico, R maneja automáticamente las variables categóricas creando variables indicadoras (dummies) "bajo el capó" sin necesidad de transformaciones manuales previas.
+
+La formulación teórica de este modelo generalizado es:
+
+$$monto = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \dots + \beta_n X_n + \epsilon$$
+
+### Modelo Ajustado (Eliminando variables sin significancia)
+A partir de los resultados del modelo saturado, se depuran aquellas variables que no aportan significancia estadística (como los factores estéticos o ambientales). Este modelo refinado mantiene las variables del modelo múltiple y añade el historial de siniestros (`sinPrevios`) y si hubo modificación de póliza (`cambioCobert`).
+
+La formulación teórica de este modelo es:
+
+$$monto = \beta_0 + \beta_1 X_{\text{madrugada}} + \beta_2 X_{\text{demora}} + \beta_3 X_{\text{gravedad}} + \beta_4 X_{\text{cobertura}} + \beta_5 X_{\text{sinPrevios}} + \beta_6 X_{\text{cambioCobert}} + \beta_7 X_{\text{fraude}} + \epsilon$$
+
+### Modelo Final (Último ajuste)
+Como iteración definitiva para buscar el modelo más parsimonioso y eficiente, se realiza un último ajuste descartando la variable `cambioCobert`, consolidando así los predictores más robustos.
+
+La formulación teórica de este modelo es:
+
+$$monto = \beta_0 + \beta_1 X_{\text{madrugada}} + \beta_2 X_{\text{demora}} + \beta_3 X_{\text{gravedad}} + \beta_4 X_{\text{cobertura}} + \beta_5 X_{\text{sinPrevios}} + \beta_6 X_{\text{fraude}} + \epsilon$$
+
+A continuación se comparan los coeficientes, el poder explicativo ($R^2$) y la significancia estadística de todos los modelos de manera simultánea en una única tabla.
+
+```{r modelos_regresion, results='asis', warning=FALSE, message=FALSE}
+# Cargar la librería necesaria para el formateo de tablas
+library(stargazer)
+
+# ==============================================================================
+# MODELO LINEAL SIMPLE (Base)
+# ==============================================================================
+# Buscamos explicar el monto usando únicamente los días de demora
+reg_base <- lm(monto ~ gravedad, data = segurosTrain)
+
+# ==============================================================================
+# MODELO MÚLTIPLE (Con variables de control de fraude y ruido numérico)
+# ==============================================================================
+# Agregamos la hora del siniestro y la temperatura del clima (variable de ruido)
+reg_control <- lm(
+  monto ~ madrugada + demora + gravedad + cobertura + fraude, 
+  data = segurosTrain
+)
+
+# ==============================================================================
+# MODELO SATURADO (Incluyendo las categóricas fuertes y de ruido)
+# ==============================================================================
+# R maneja automáticamente las categóricas creando variables dummy bajo el capó
+reg_full <- lm(
+  monto ~ .,
+  data = segurosTrain
+)
+
+# ==============================================================================
+# MODELO AJUSTADO (Eliminando las variables sin significancia estadística)
+# ==============================================================================
+reg_ajuste <- lm(
+  monto ~ madrugada + demora + gravedad + cobertura + 
+    sinPrevios + cambioCobert + fraude,
+  data = segurosTrain
+)
+
+# ==============================================================================
+# MODELO FINAL (Último ajuste)
+# ==============================================================================
+reg_final <- lm(
+  monto ~ madrugada + demora + gravedad + cobertura + 
+    sinPrevios + fraude,
+  data = segurosTrain
+)
+
+# Mostrar resultados como una tabla consolidada en formato HTML
+stargazer(reg_base, reg_control, reg_full, reg_ajuste, reg_final,
+          type = "html", 
+          title = "Resultados Comparativos: Modelos de Regresión Lineal",
+          align = TRUE,
+          keep.stat = c("n", "rsq", "adj.rsq", "f"),
+          model.names = FALSE,
+          column.labels = c("Modelo Base", "Modelo Múltiple", "Modelo Saturado",
+                            "Modelo Ajustado", "Modelo Final"),
+          intercept.bottom = FALSE) # Coloca la constante (Intercepto) al inicio de la tabla
+```
+
+# Comparación de Modelos (Selección de Variables)
+
+Para determinar cuál de los modelos desarrollados ofrece el mejor equilibrio entre poder explicativo y parsimonia (simplicidad), se construye una tabla comparativa de criterios de información. 
+
+Se extraen métricas clave como el $R^2$ (varianza explicada), el $R^2$ Ajustado (que penaliza el exceso de variables) y los Criterios de Información de Akaike y Bayesiano (AIC y BIC, donde valores más bajos indican un mejor modelo). Esta comparación incluye desde el modelo base hasta las versiones ajustada y final.
+
+```{r comparacion_modelos, warning=FALSE, message=FALSE}
+# Cargar librería para dar estilos avanzados a la tabla HTML
+library(kableExtra)
+
+# ==============================================================================
+# COMPARACIÓN DE MODELOS (Selección de Variables)
+# ==============================================================================
+# Construcción de la tabla comparativa de criterios de información
+tabla_modelos <- bind_rows(
+  "Modelo Base" = glance(reg_base),
+  "Modelo Control" = glance(reg_control),
+  "Modelo Full" = glance(reg_full),
+  "Modelo Ajustado" = glance(reg_ajuste),
+  "Modelo Final" = glance(reg_final),
+  .id = "Modelo"
+) %>% 
+  select(Modelo, r.squared, adj.r.squared, AIC, BIC)
+
+# Mostrar la tabla en formato HTML usando kable y kableExtra
+knitr::kable(
+  tabla_modelos, 
+  format = "html", 
+  digits = 2,  # Redondear a 2 decimales
+  align = "c", # Alinear los valores al centro en todas las columnas
+  col.names = c("Modelo", "R Cuadrado", "R Cuadrado Ajustado", "AIC", "BIC"),
+  caption = "Tabla Comparativa de Modelos de Regresión (Criterios de Información)"
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"), # Estilos limpios y modernos
+    position = "center",                       # Centra la tabla completa en el documento HTML
+    full_width = FALSE                         # Evita que se estire a los bordes de la pantalla
+  ) %>%
+  column_spec(1:5, extra_css = "padding-left: 20px; padding-right: 20px;") # Agrega espacio entre columnas
+```
+
+# Predicción y Evaluación sobre el Conjunto de Prueba
+
+Una vez seleccionado el modelo final, el siguiente paso es poner a prueba su capacidad predictiva utilizando el conjunto de datos de prueba (`segurosTest`), es decir, las observaciones que el algoritmo no ha "visto" durante su entrenamiento. Para ello, se generan las predicciones del monto. Dado que la regresión lineal múltiple no está acotada y matemáticamente puede generar predicciones negativas (lo cual carece de sentido para un monto económico), se aplica una regla de negocio: si una predicción resulta menor a cero, se le asigna el valor mínimo observado en el conjunto de entrenamiento.
+
+Posteriormente, se calculan los residuales (la diferencia entre el monto real exigido y el monto predicho por el modelo) y se evalúa la precisión con métricas estándar: el Error Cuadrático Medio (RMSE), el Error Absoluto Medio (MAE) y el coeficiente de determinación ($R^2$) fuera de muestra.
+
+Finalmente, se visualiza el comportamiento de los errores mediante un gráfico de dispersión que compara las predicciones frente a los residuales. Para enriquecer la visualización, se ajusta un modelo lineal simple interino que dibuja la línea de tendencia del error.
+
+```{r evaluacion_test, warning=FALSE, message=FALSE}
+# Cargar librería para dar estilos a la tabla (en caso de no haberse cargado antes)
+library(kableExtra)
+
+# ==============================================================================
+# PREDICCIÓN SOBRE EL CONJUNTO DE PRUEBA (TEST SET)
+# ==============================================================================
+# 1. Generar predicciones utilizando el modelo final en los datos que no ha visto
+segurosTest$pred_monto <- predict(reg_final, newdata = segurosTest)
+
+# Acotar predicciones negativas: Si es menor a 0, tomar el valor mínimo de entrenamiento
+min_monto_train <- min(segurosTrain$monto, na.rm = TRUE)
+segurosTest$pred_monto <- ifelse(segurosTest$pred_monto < 0, 
+                                 min_monto_train, 
+                                 segurosTest$pred_monto)
+
+# 2. Calcular los residuales (Monto real menos el Monto predicho)
+segurosTest$res_monto <- segurosTest$monto - segurosTest$pred_monto
+
+# ==============================================================================
+# EVALUACIÓN DE MÉTRICAS DE PRECISIÓN
+# ==============================================================================
+# Calcular métricas estándar de regresión lineal en datos de prueba
+rmse_test <- RMSE(segurosTest$pred_monto, segurosTest$monto)
+mae_test  <- MAE(segurosTest$pred_monto, segurosTest$monto)
+
+# Calcular R-cuadrado fuera de muestra de forma matemática directa
+r2_test   <- cor(segurosTest$monto, segurosTest$pred_monto)^2
+
+# Construir un dataframe con los resultados para mostrarlo en una tabla
+metricas_test <- data.frame(
+  Metrica = c("Root Mean Squared Error (RMSE)", 
+              "Mean Absolute Error (MAE)", 
+              "R-squared (R2 Test)"),
+  Valor = c(round(rmse_test, 2), 
+            round(mae_test, 2), 
+            round(r2_test, 4))
+)
+
+# Mostrar la tabla en formato HTML usando kable y kableExtra
+knitr::kable(
+  metricas_test, 
+  format = "html", 
+  align = c("l", "c"), # Izquierda para el nombre, centro para el valor
+  col.names = c("Métrica de Precisión", "Valor Calculado"),
+  caption = "Rendimiento del Modelo Final en el Conjunto de Prueba"
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"), 
+    position = "center",                       
+    full_width = FALSE                         
+  ) %>%
+  column_spec(1, bold = TRUE, extra_css = "padding-left: 20px; padding-right: 20px;") %>%
+  column_spec(2, extra_css = "padding-left: 20px; padding-right: 20px;")
+
+# ==============================================================================
+# GRÁFICO DE RESIDUALES EN EL TEST SET (ggplot2)
+# ==============================================================================
+# Ajustamos un modelo lineal simple interino para dibujar la tendencia del error
+reg_res_test <- lm(res_monto ~ pred_monto, data = segurosTest)
+
+# Desplegar el gráfico de dispersión de residuales frente a predicciones
+segurosTest %>% ggplot(aes(x = pred_monto, y = res_monto)) + 
+  geom_point(alpha = 0.6, color = "#001F82") + 
+  geom_abline(intercept = coef(reg_res_test)[1], 
+              slope = coef(reg_res_test)[2], 
+              color = "#0099F8", linewidth = 1.5) +
+  labs(title = "Predicciones VS Residuales (Conjunto de Prueba)",
+       subtitle = "Monto ~ Madrugada + Demora + Gravedad + Cobertura + sinPrevios + Fraude",
+       x = "Predicción de Monto del Reclamo ($)",
+       y = "Residuales (Error en Test Set)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "#0099F8", size = 15, face = "bold"),
+    plot.subtitle = element_text(color = "#969696", size = 11, face = "italic"),
+    axis.title = element_text(color = "#969696", size = 10, face = "bold"),
+    axis.text = element_text(color = "#969696", size = 9),
+    axis.line = element_line(color = "#969696")
+  )
+```

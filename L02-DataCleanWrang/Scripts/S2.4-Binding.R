@@ -48,7 +48,7 @@ head(ventas)
 skim(ventas)
 
 # Exportar el CSV consolidado
-# write.csv(ventas, "Fventas.csv", row.names = FALSE)
+write.csv(ventas, "Fventas.csv", row.names = FALSE)
 
 # ==========================================
 # UNIR DOS TABLAS DE DATOS CON INFORMACIÓN DISTINTA

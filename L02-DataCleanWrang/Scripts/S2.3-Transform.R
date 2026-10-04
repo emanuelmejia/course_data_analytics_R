@@ -195,8 +195,11 @@ head(cpiAus)
 # Unimos ambas tablas por fecha (Inner Join)
 econAus <- merge(turnAus, cpiAus, by = "ds")
 head(econAus)
+tail(econAus)
 
 skim(econAus)
+
+econAus[econAus$ds == 2010,]
 
 # ==========================================
 # TRANSFORMACIÓN AJUSTE INFLACIONARIO
@@ -205,7 +208,7 @@ econAus_transf <- econAus %>%
   transmute(
     fecha         = ds,
     Facturacion   = Turnover,
-    FactAjust     = Turnover / CPI * 100,
+    FactAjust     = Turnover / (CPI / 100),
   )
 
 head(econAus_transf)
@@ -249,13 +252,11 @@ pas_df <- as.data.frame(
   cbind(Pasajeros = pas,
         logPasajeros = log(pas)))
 
-
 # Gráfico Final
 plot(pas_df$Pasajeros, 
      main='Reservaciones de Pasajeros en Vuelos Internacionales', 
      ylab='Pasajeros',
      type = "l", col = "deeppink")
-
 
 # Gráfico Final
 plot(pas_df$logPasajeros, 
